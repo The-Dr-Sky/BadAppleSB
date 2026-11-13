@@ -1,0 +1,9 @@
+Package: com.yyyywaiwai.badapplesb
+Name: BadAppleSB
+Version: 0.1.0
+Architecture: iphoneos-arm64
+Description: Draws Bad Apple!! on the iOS Home Screen using random app icons as dots, triggered by a 10-second long press on a non-icon area.
+Maintainer: yyyywaiwai
+Author: yyyywaiwai
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 17.0)

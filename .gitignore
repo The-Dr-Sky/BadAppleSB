@@ -1,0 +1,13 @@
+.theos/
+packages/
+scratch/
+.yomiyasu/
+.DS_Store
+__pycache__/
+*.deb
+*.webm
+*.mp4
+*.mkv
+*.mov
+layout/Library/Application Support/BadAppleSB/badapple.bin
+layout/Library/Application Support/BadAppleSB/badapple.m4a
