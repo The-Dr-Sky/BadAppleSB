@@ -11,15 +11,22 @@ struct SBIconImageInfo {
 - (NSString *)applicationBundleID;
 - (NSString *)nodeIdentifier;
 - (UIImage *)generateIconImageWithInfo:(struct SBIconImageInfo)info;
+- (UIImage *)iconImageWithInfo:(struct SBIconImageInfo)info;
 @end
 
 @interface SBIconView : UIView
 @property (nonatomic, strong) SBIcon *icon;
 @end
 
+@interface SBHIconImageAppearance : NSObject
++ (instancetype)defaultAppearance;
+@end
+
 @interface SBHIconImageCache : NSObject
 @property (nonatomic, readonly) struct SBIconImageInfo iconImageInfo;
 - (UIImage *)realImageForIcon:(SBIcon *)icon options:(NSUInteger)options;
+- (UIImage *)realImageForIcon:(SBIcon *)icon imageAppearance:(id)appearance options:(NSUInteger)options;
+- (UIImage *)realImageForIcon:(SBIcon *)icon compatibleWithTraitCollection:(UITraitCollection *)traitCollection options:(NSUInteger)options;
 - (UIImage *)imageForIcon:(SBIcon *)icon;
 @end
 
@@ -48,6 +55,7 @@ struct SBIconImageInfo {
 - (BOOL)isShowingIconContextMenu;
 - (BOOL)isIconDragging;
 - (BOOL)isRootFolderContentVisible;
+- (UIViewController *)floatingDockViewController;
 - (void)enumerateDisplayedIconViewsUsingBlock:(void (^)(SBIconView *iconView, BOOL *stop))block;
 @end
 
@@ -55,8 +63,18 @@ struct SBIconImageInfo {
 
 @interface SBHomeScreenViewController : UIViewController
 @property (nonatomic, readonly) SBIconController *iconController;
+@property (nonatomic, readonly) SBHIconManager *iconManager;
 @property (nonatomic, readonly) UIView *iconContentView;
 @property (nonatomic, readonly, getter=isIconContentHidden) BOOL iconContentHidden;
+@end
+
+@interface SBHomeScreenController : NSObject
+@property (nonatomic, readonly) SBHomeScreenViewController *homeScreenViewController;
+@property (nonatomic, readonly) SBHIconManager *iconManager;
+- (id)currentIconImageAppearance;
+- (void)_lockScreenUIWillLock:(id)notification;
+- (void)_coverSheetWillPresent:(id)notification;
+- (void)_coverSheetWillDismiss:(id)notification;
 @end
 
 @interface SBIconController : NSObject

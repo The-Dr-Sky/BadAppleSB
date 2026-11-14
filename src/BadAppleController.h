@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 
-@class SBIconController;
+@class SBHIconManager;
+@class SBHomeScreenViewController;
 
 @interface BadAppleController : NSObject
 
@@ -8,7 +9,9 @@
 
 + (instancetype)sharedController;
 
-- (void)attachTriggerGestureToIconController:(SBIconController *)iconController;
+- (void)attachTriggerGestureToHomeScreenViewController:(SBHomeScreenViewController *)homeVC
+                                             controller:(id)controller;
+- (void)attachTriggerGestureFromController:(id)controller;
 - (void)ensureTriggerGestureAttached;
 - (void)stopPlaybackAnimated:(BOOL)animated;
 

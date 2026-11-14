@@ -30,7 +30,11 @@ typedef struct __attribute__((packed)) {
 @interface BadAppleController () <UIGestureRecognizerDelegate, AVAudioPlayerDelegate>
 
 @property (nonatomic, readwrite, getter=isPlaying) BOOL playing;
-@property (nonatomic, weak) SBIconController *iconController;
+@property (nonatomic, weak) SBHomeScreenViewController *homeScreenViewController;
+@property (nonatomic, weak) SBHIconManager *iconManager;
+@property (nonatomic, weak) id homeScreenOwner;
+@property (nonatomic, weak) UIView *fadedDockView;
+@property (nonatomic, assign) BOOL savedDockUserInteractionEnabled;
 @property (nonatomic, weak) UIView *gestureHostView;
 @property (nonatomic, strong) UILongPressGestureRecognizer *triggerGesture;
 @property (nonatomic, strong) BadAppleCanvasView *canvasView;
@@ -77,20 +81,74 @@ typedef struct __attribute__((packed)) {
     _lastRenderedFrame = -1;
 }
 
-- (void)attachTriggerGestureToIconController:(SBIconController *)iconController {
-    if (!iconController) {
+- (void)attachTriggerGestureFromController:(id)controller {
+    if (!controller) {
         return;
     }
-    self.iconController = iconController;
+    SBHomeScreenViewController *homeVC =
+        [controller respondsToSelector:@selector(homeScreenViewController)] ? [controller homeScreenViewController] : nil;
+    [self attachTriggerGestureToHomeScreenViewController:homeVC controller:controller];
+}
+
+- (SBHIconManager *)resolveIconManagerForHomeVC:(SBHomeScreenViewController *)homeVC
+                                       controller:(id)controller {
+    if (controller && [controller respondsToSelector:@selector(iconManager)]) {
+        SBHIconManager *mgr = [controller iconManager];
+        if (mgr) {
+            return mgr;
+        }
+    }
+    if (homeVC && [homeVC respondsToSelector:@selector(iconManager)]) {
+        SBHIconManager *mgr = [homeVC iconManager];
+        if (mgr) {
+            return mgr;
+        }
+    }
+    if (homeVC && [homeVC respondsToSelector:@selector(iconController)]) {
+        SBHIconManager *mgr = [homeVC iconController].iconManager;
+        if (mgr) {
+            return mgr;
+        }
+    }
+    Class iconCtrlClass = NSClassFromString(@"SBIconController");
+    if ([iconCtrlClass respondsToSelector:@selector(sharedInstanceIfExists)]) {
+        SBIconController *shared = [iconCtrlClass sharedInstanceIfExists];
+        if (shared && [shared respondsToSelector:@selector(iconManager)]) {
+            return shared.iconManager;
+        }
+    }
+    return nil;
+}
+
+- (void)attachTriggerGestureToHomeScreenViewController:(SBHomeScreenViewController *)homeVC
+                                             controller:(id)controller {
+    if (controller) {
+        self.homeScreenOwner = controller;
+        if (!homeVC && [controller respondsToSelector:@selector(homeScreenViewController)]) {
+            homeVC = [controller homeScreenViewController];
+        }
+    }
+    if (homeVC) {
+        self.homeScreenViewController = homeVC;
+    }
+    SBHIconManager *resolvedManager = [self resolveIconManagerForHomeVC:self.homeScreenViewController
+                                                              controller:controller ?: self.homeScreenOwner];
+    if (resolvedManager) {
+        self.iconManager = resolvedManager;
+    }
     [self ensureTriggerGestureAttached];
 }
 
 - (void)ensureTriggerGestureAttached {
-    SBIconController *iconController = self.iconController;
-    if (!iconController || ![iconController respondsToSelector:@selector(homeScreenViewController)]) {
-        return;
+    SBHomeScreenViewController *homeVC = self.homeScreenViewController;
+    if (!homeVC && [self.homeScreenOwner respondsToSelector:@selector(homeScreenViewController)]) {
+        homeVC = [self.homeScreenOwner homeScreenViewController];
+        self.homeScreenViewController = homeVC;
     }
-    SBHomeScreenViewController *homeVC = iconController.homeScreenViewController;
+    if (!self.iconManager) {
+        self.iconManager = [self resolveIconManagerForHomeVC:homeVC controller:self.homeScreenOwner];
+    }
+
     UIView *homeView = homeVC.view;
     if (!homeView) {
         return;
@@ -128,11 +186,13 @@ typedef struct __attribute__((packed)) {
     Class iconViewClass = NSClassFromString(@"SBIconView");
     Class searchAffordanceClass = NSClassFromString(@"SBHSearchAffordance");
     Class searchPillClass = NSClassFromString(@"SBHSearchPillView");
+    Class dockPlatterClass = NSClassFromString(@"SBFloatingDockPlatterView");
     for (UIView *v = leafView; v && v != stopView; v = v.superview) {
         if ([v isKindOfClass:[UIControl class]] ||
             (iconViewClass && [v isKindOfClass:iconViewClass]) ||
             (searchAffordanceClass && [v isKindOfClass:searchAffordanceClass]) ||
-            (searchPillClass && [v isKindOfClass:searchPillClass])) {
+            (searchPillClass && [v isKindOfClass:searchPillClass]) ||
+            (dockPlatterClass && [v isKindOfClass:dockPlatterClass])) {
             return YES;
         }
     }
@@ -148,23 +208,20 @@ typedef struct __attribute__((packed)) {
         return NO;
     }
 
-    SBIconController *iconController = self.iconController;
-    if (!iconController) {
-        return NO;
-    }
-    SBHIconManager *iconManager = iconController.iconManager;
-    SBHomeScreenViewController *homeVC = iconController.homeScreenViewController;
+    SBHomeScreenViewController *homeVC = self.homeScreenViewController;
+    SBHIconManager *iconManager = self.iconManager ?: [self resolveIconManagerForHomeVC:homeVC controller:self.homeScreenOwner];
     if (!iconManager || !homeVC || !homeVC.view) {
         return NO;
     }
+    self.iconManager = iconManager;
 
-    if ([homeVC isIconContentHidden] ||
-        [iconManager hasOpenFolder] ||
-        [iconManager isOverlayTodayOrLibraryViewVisible] ||
-        [iconManager isMainDisplayLibraryViewVisible] ||
-        [iconManager isFolderPageManagementUIVisible] ||
-        [iconManager isShowingIconContextMenu] ||
-        [iconManager isIconDragging]) {
+    if (([homeVC respondsToSelector:@selector(isIconContentHidden)] && [homeVC isIconContentHidden]) ||
+        ([iconManager respondsToSelector:@selector(hasOpenFolder)] && [iconManager hasOpenFolder]) ||
+        ([iconManager respondsToSelector:@selector(isOverlayTodayOrLibraryViewVisible)] && [iconManager isOverlayTodayOrLibraryViewVisible]) ||
+        ([iconManager respondsToSelector:@selector(isMainDisplayLibraryViewVisible)] && [iconManager isMainDisplayLibraryViewVisible]) ||
+        ([iconManager respondsToSelector:@selector(isFolderPageManagementUIVisible)] && [iconManager isFolderPageManagementUIVisible]) ||
+        ([iconManager respondsToSelector:@selector(isShowingIconContextMenu)] && [iconManager isShowingIconContextMenu]) ||
+        ([iconManager respondsToSelector:@selector(isIconDragging)] && [iconManager isIconDragging])) {
         return NO;
     }
 
@@ -175,18 +232,20 @@ typedef struct __attribute__((packed)) {
 
     // Reject if touch hits any displayed icon/widget/folder view.
     __block BOOL touchesIcon = NO;
-    [iconManager enumerateDisplayedIconViewsUsingBlock:^(SBIconView *iconView, BOOL *stop) {
-        if (!iconView.window || iconView.hidden || iconView.alpha <= 0.01) {
-            return;
-        }
-        CGPoint pt = [touch locationInView:iconView];
-        if (CGRectContainsPoint(iconView.bounds, pt)) {
-            touchesIcon = YES;
-            if (stop) {
-                *stop = YES;
+    if ([iconManager respondsToSelector:@selector(enumerateDisplayedIconViewsUsingBlock:)]) {
+        [iconManager enumerateDisplayedIconViewsUsingBlock:^(SBIconView *iconView, BOOL *stop) {
+            if (!iconView.window || iconView.hidden || iconView.alpha <= 0.01) {
+                return;
             }
-        }
-    }];
+            CGPoint pt = [touch locationInView:iconView];
+            if (CGRectContainsPoint(iconView.bounds, pt)) {
+                touchesIcon = YES;
+                if (stop) {
+                    *stop = YES;
+                }
+            }
+        }];
+    }
     if (touchesIcon) {
         return NO;
     }
@@ -304,9 +363,41 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
     }];
 }
 
+- (UIImage *)iconImageForIcon:(SBIcon *)icon
+                    imageCache:(SBHIconImageCache *)imageCache
+                    appearance:(id)imageAppearance
+                          info:(struct SBIconImageInfo)imageInfo {
+    UIImage *rawImg = nil;
+    if (imageCache) {
+        if ([imageCache respondsToSelector:@selector(realImageForIcon:options:)]) {
+            rawImg = [imageCache realImageForIcon:icon options:0];
+        }
+        if (!rawImg && imageAppearance &&
+            [imageCache respondsToSelector:@selector(realImageForIcon:imageAppearance:options:)]) {
+            rawImg = [imageCache realImageForIcon:icon imageAppearance:imageAppearance options:0];
+        }
+        if (!rawImg &&
+            [imageCache respondsToSelector:@selector(realImageForIcon:compatibleWithTraitCollection:options:)]) {
+            rawImg = [imageCache realImageForIcon:icon
+                   compatibleWithTraitCollection:[UITraitCollection currentTraitCollection]
+                                         options:0];
+        }
+        if (!rawImg && [imageCache respondsToSelector:@selector(imageForIcon:)]) {
+            rawImg = [imageCache imageForIcon:icon];
+        }
+    }
+    if (!rawImg && [icon respondsToSelector:@selector(generateIconImageWithInfo:)]) {
+        rawImg = [icon generateIconImageWithInfo:imageInfo];
+    }
+    if (!rawImg && [icon respondsToSelector:@selector(iconImageWithInfo:)]) {
+        rawImg = [icon iconImageWithInfo:imageInfo];
+    }
+    return rawImg;
+}
+
 - (NSArray<UIImage *> *)collectAppIconImages {
-    SBIconController *iconController = self.iconController;
-    SBHIconManager *iconManager = iconController.iconManager;
+    SBHIconManager *iconManager =
+        self.iconManager ?: [self resolveIconManagerForHomeVC:self.homeScreenViewController controller:self.homeScreenOwner];
     SBHIconModel *iconModel = iconManager.iconModel;
     SBHIconImageCache *imageCache = iconManager.iconImageCache;
     SBRootFolder *rootFolder = iconManager.rootFolder;
@@ -315,10 +406,13 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
     NSMutableSet<NSString *> *seenIDs = [NSMutableSet set];
 
     void (^addIconIfEligible)(SBIcon *) = ^(SBIcon *icon) {
-        if (!icon || ![icon isApplicationIcon]) {
+        if (!icon || ![icon respondsToSelector:@selector(isApplicationIcon)] || ![icon isApplicationIcon]) {
             return;
         }
-        NSString *key = [icon applicationBundleID] ?: [icon nodeIdentifier];
+        NSString *key = [icon respondsToSelector:@selector(applicationBundleID)] ? [icon applicationBundleID] : nil;
+        if (!key.length && [icon respondsToSelector:@selector(nodeIdentifier)]) {
+            key = [icon nodeIdentifier];
+        }
         if (!key.length || [seenIDs containsObject:key]) {
             return;
         }
@@ -329,34 +423,36 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
         [candidateIcons addObject:icon];
     };
 
-    if (rootFolder) {
+    if (rootFolder && [rootFolder respondsToSelector:@selector(allIcons)]) {
         for (SBIcon *icon in [rootFolder allIcons]) {
             addIconIfEligible(icon);
         }
     }
-    if (iconModel) {
+    if (iconModel && [iconModel respondsToSelector:@selector(leafIcons)]) {
         for (SBIcon *icon in [iconModel leafIcons]) {
             addIconIfEligible(icon);
         }
     }
 
     struct SBIconImageInfo imageInfo = {CGSizeMake(60, 60), [UIScreen mainScreen].scale, 13.5};
-    if (imageCache) {
+    if (imageCache && [imageCache respondsToSelector:@selector(iconImageInfo)]) {
         imageInfo = imageCache.iconImageInfo;
+    }
+
+    id imageAppearance = nil;
+    if ([self.homeScreenOwner respondsToSelector:@selector(currentIconImageAppearance)]) {
+        imageAppearance = [self.homeScreenOwner currentIconImageAppearance];
+    }
+    if (!imageAppearance) {
+        Class appearanceClass = NSClassFromString(@"SBHIconImageAppearance");
+        if ([appearanceClass respondsToSelector:@selector(defaultAppearance)]) {
+            imageAppearance = [appearanceClass defaultAppearance];
+        }
     }
 
     NSMutableArray<UIImage *> *images = [NSMutableArray arrayWithCapacity:candidateIcons.count];
     for (SBIcon *icon in candidateIcons) {
-        UIImage *rawImg = nil;
-        if (imageCache) {
-            rawImg = [imageCache realImageForIcon:icon options:0];
-        }
-        if (!rawImg && [icon respondsToSelector:@selector(generateIconImageWithInfo:)]) {
-            rawImg = [icon generateIconImageWithInfo:imageInfo];
-        }
-        if (!rawImg && imageCache) {
-            rawImg = [imageCache imageForIcon:icon];
-        }
+        UIImage *rawImg = [self iconImageForIcon:icon imageCache:imageCache appearance:imageAppearance info:imageInfo];
         if (rawImg) {
             UIImage *compact = [self downscaledSquareImage:rawImg sidePixels:48.0];
             if (compact) {
@@ -376,12 +472,13 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
         return;
     }
 
-    SBIconController *iconController = self.iconController;
-    SBHIconManager *iconManager = iconController.iconManager;
-    SBHomeScreenViewController *homeVC = iconController.homeScreenViewController;
+    SBHomeScreenViewController *homeVC = self.homeScreenViewController;
+    SBHIconManager *iconManager =
+        self.iconManager ?: [self resolveIconManagerForHomeVC:homeVC controller:self.homeScreenOwner];
     if (!iconManager || !homeVC || !homeVC.view) {
         return;
     }
+    self.iconManager = iconManager;
 
     if (![self loadFrameData]) {
         return;
@@ -426,7 +523,9 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
     os_log(BadAppleLog(), "Audio session active, outputVolume=%.2f", session.outputVolume);
 
     // Exit jiggle mode if the 10s hold triggered SpringBoard editing at ~0.5s.
-    if ([iconManager isEditing]) {
+    if ([iconManager respondsToSelector:@selector(isEditing)] &&
+        [iconManager respondsToSelector:@selector(setEditing:withFeedbackBehavior:)] &&
+        [iconManager isEditing]) {
         [iconManager setEditing:NO withFeedbackBehavior:nil];
     }
 
@@ -449,7 +548,7 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
     exitTap.numberOfTapsRequired = 2;
     [canvas addGestureRecognizer:exitTap];
 
-    UIView *iconContentView = homeVC.iconContentView;
+    UIView *iconContentView = [homeVC respondsToSelector:@selector(iconContentView)] ? homeVC.iconContentView : nil;
     [homeVC.view addSubview:canvas];
     self.canvasView = canvas;
 
@@ -457,10 +556,32 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
         iconContentView.userInteractionEnabled = NO;
     }
 
+    UIView *dockTarget = nil;
+    if ([iconManager respondsToSelector:@selector(floatingDockViewController)]) {
+        UIViewController *dockVC = [iconManager floatingDockViewController];
+        if (dockVC.isViewLoaded && dockVC.view) {
+            UIWindow *dockWindow = dockVC.view.window;
+            dockTarget = (dockWindow && dockWindow != homeVC.view.window) ? (UIView *)dockWindow : dockVC.view;
+            if (dockTarget == homeVC.view || dockTarget == iconContentView) {
+                dockTarget = nil;
+            }
+        }
+    }
+    if (dockTarget) {
+        self.fadedDockView = dockTarget;
+        self.savedDockUserInteractionEnabled = dockTarget.userInteractionEnabled;
+        dockTarget.userInteractionEnabled = NO;
+    } else {
+        self.fadedDockView = nil;
+    }
+
     [UIView animateWithDuration:0.28 animations:^{
         canvas.alpha = 1.0;
         if (iconContentView) {
             iconContentView.alpha = 0.0;
+        }
+        if (dockTarget) {
+            dockTarget.alpha = 0.0;
         }
     } completion:^(BOOL finished) {
         [canvas showExitHintBriefly];
@@ -547,12 +668,18 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
 
     [self freeFrameBuffer];
 
-    UIView *iconContentView = self.iconController.homeScreenViewController.iconContentView;
+    SBHomeScreenViewController *homeVC = self.homeScreenViewController;
+    UIView *iconContentView = [homeVC respondsToSelector:@selector(iconContentView)] ? homeVC.iconContentView : nil;
+    UIView *dockTarget = self.fadedDockView;
+    self.fadedDockView = nil;
     BadAppleCanvasView *canvas = self.canvasView;
     self.canvasView = nil;
 
     if (iconContentView) {
         iconContentView.userInteractionEnabled = YES;
+    }
+    if (dockTarget) {
+        dockTarget.userInteractionEnabled = self.savedDockUserInteractionEnabled;
     }
 
     if (animated && canvas) {
@@ -561,12 +688,18 @@ shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)otherG
             if (iconContentView) {
                 iconContentView.alpha = 1.0;
             }
+            if (dockTarget) {
+                dockTarget.alpha = 1.0;
+            }
         } completion:^(BOOL finished) {
             [canvas removeFromSuperview];
         }];
     } else {
         if (iconContentView) {
             iconContentView.alpha = 1.0;
+        }
+        if (dockTarget) {
+            dockTarget.alpha = 1.0;
         }
         [canvas removeFromSuperview];
     }
